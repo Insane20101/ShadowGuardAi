@@ -78,11 +78,18 @@ class Sanitizer:
         counts: dict[str, int] = {}
         replacements: dict[tuple[str, str], str] = {}
 
+        # Reserve placeholder-like strings already present in the input.
+        # This prevents generated tokens from colliding with user text.
+        reserved_tokens = set(
+            re.findall(r"\[[A-Z][A-Z0-9_]*\]", text)
+        )
+
         # First detect regex-based PII and record protected spans.
         regex_matches = []
 
         for match in COMBINED_PATTERN.finditer(text):
             entity_type = match.lastgroup
+
             if entity_type is None:
                 continue
 
@@ -94,6 +101,7 @@ class Sanitizer:
 
             elif entity_type == "PHONE":
                 digits = re.sub(r"\D", "", original)
+
                 if not 8 <= len(digits) <= 15:
                     continue
 
@@ -101,20 +109,32 @@ class Sanitizer:
                 (match.start(), match.end(), entity_type, original)
             )
 
-        # Generate stable placeholders for repeated values.
+        # Generate stable, collision-safe placeholders for repeated values.
         def make_token(entity_type: str, original: str) -> str:
             cache_key = (entity_type, original)
 
-            if cache_key not in replacements:
-                counts[entity_type] = counts.get(entity_type, 0) + 1
-                token = f"[{entity_type}_{counts[entity_type]}]"
-                replacements[cache_key] = token
-                mapping[token] = original
+            if cache_key in replacements:
+                return replacements[cache_key]
 
-            return replacements[cache_key]
+            next_number = counts.get(entity_type, 0) + 1
+
+            while True:
+                token = f"[{entity_type}_{next_number}]"
+                next_number += 1
+
+                if token not in reserved_tokens and token not in mapping:
+                    break
+
+            counts[entity_type] = next_number - 1
+            replacements[cache_key] = token
+            mapping[token] = original
+            reserved_tokens.add(token)
+
+            return token
 
         # Mask regex matches first. NER should not overwrite these spans.
         protected_spans = []
+
         for start, end, entity_type, original in regex_matches:
             token = make_token(entity_type, original)
             protected_spans.append((start, end, token))
@@ -135,7 +155,7 @@ class Sanitizer:
                 if start < 0 or end > len(text) or start >= end:
                     continue
 
-                # Regex PII has priority: skip any overlapping NER span.
+                # Regex PII has priority: skip overlapping NER spans.
                 overlaps_regex = any(
                     start < protected_end and end > protected_start
                     for protected_start, protected_end, _ in protected_spans
@@ -148,8 +168,11 @@ class Sanitizer:
                     (start, end, label, text[start:end])
                 )
 
-        # Resolve any overlapping NER spans, preferring the longer span.
-        ner_matches.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+        # Resolve overlapping NER spans, preferring the longer span.
+        ner_matches.sort(
+            key=lambda item: (item[0], -(item[1] - item[0]))
+        )
+
         accepted_ner = []
 
         for candidate in ner_matches:
@@ -176,7 +199,9 @@ class Sanitizer:
         sanitized_text = text
 
         for start, end, token in sorted(
-            all_matches, key=lambda item: item[0], reverse=True
+            all_matches,
+            key=lambda item: item[0],
+            reverse=True,
         ):
             sanitized_text = (
                 sanitized_text[:start] + token + sanitized_text[end:]
@@ -194,8 +219,20 @@ def sanitize(text: str) -> SanitizationResult:
     return Sanitizer().sanitize(text)
 
 
-def restore(text: str, mapping: dict[str, str]) -> str:
-    for token, original in mapping.items():
-        text = text.replace(token, original)
 
-    return text
+
+
+
+
+def restore(text: str, mapping: dict[str, str]) -> str:
+    if not mapping:
+        return text
+
+    pattern = re.compile(
+        "|".join(
+            re.escape(token)
+            for token in sorted(mapping, key=len, reverse=True)
+        )
+    )
+
+    return pattern.sub(lambda match: mapping[match.group(0)], text)

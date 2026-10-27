@@ -158,3 +158,45 @@ def test_mapping_is_not_in_sanitized_text():
     assert "[EMAIL_1]" in result.sanitized_text
     assert "alice@example.com" not in result.sanitized_text
     assert result.mapping["[EMAIL_1]"] == "alice@example.com"
+
+
+def test_existing_placeholder_does_not_collide_with_generated_token():
+    sanitizer = Sanitizer(
+        ner_detector=cast(NERDetector, FakeNERDetector())
+    )
+
+    text = "Literal [EMAIL_1] is written here; contact alice@example.com."
+    result = sanitizer.sanitize(text)
+
+    # The placeholder already present in the input must remain literal.
+    assert "[EMAIL_1] is written here" in result.sanitized_text
+
+    # The actual email must receive a different placeholder.
+    assert "[EMAIL_2]" in result.sanitized_text
+    assert result.mapping["[EMAIL_2]"] == "alice@example.com"
+    assert "[EMAIL_1]" not in result.mapping
+
+    # Restoring the email must not alter the original literal placeholder.
+    restored = restore(result.sanitized_text, result.mapping)
+
+    assert restored == text
+
+
+
+
+
+
+def test_restore_does_not_replace_tokens_inside_restored_values():
+    mapping = {
+        "[EMAIL_1]": "user@example.com",
+        "[PERSON_1]": "Alice [EMAIL_1]",
+    }
+
+    restored = restore(
+        "Contact [PERSON_1] and [EMAIL_1]",
+        mapping,
+    )
+
+    assert restored == (
+        "Contact Alice [EMAIL_1] and user@example.com"
+    )
