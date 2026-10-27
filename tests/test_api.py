@@ -1,21 +1,29 @@
 
 import httpx
-import pytest
+import os
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
+TEST_API_KEY = "test-shadowguard-api-key-123456789"
+os.environ["SHADOWGUARD_API_KEY"] = TEST_API_KEY
+
 from app.main import app
 
+import pytest
 
-client = TestClient(app)
+@pytest.fixture(scope="module")
+def client():
+    with TestClient(app) as test_client:
+        yield test_client
 
-API_HEADERS = {"X-API-Key": "test-secret-key"}
+API_HEADERS = {"X-API-Key": TEST_API_KEY}
 
 
-@pytest.fixture(autouse=True)
-def configure_api_key(monkeypatch):
-    monkeypatch.setenv("SHADOWGUARD_API_KEY", "test-secret-key")
+
+
+
+
 
 
 # --------------------------------------------------
@@ -69,7 +77,7 @@ def mock_async_client(mock_response=None, side_effect=None):
 # Health endpoint tests
 # --------------------------------------------------
 
-def test_health_is_public():
+def test_health_is_public(client):
     response = client.get("/health")
 
     assert response.status_code == 200
@@ -80,7 +88,7 @@ def test_health_is_public():
 # /sanitize endpoint tests
 # --------------------------------------------------
 
-def test_sanitize_rejects_missing_api_key():
+def test_sanitize_rejects_missing_api_key(client):
     response = client.post(
         "/sanitize",
         json={"text": "Contact alice@example.com"},
@@ -89,7 +97,7 @@ def test_sanitize_rejects_missing_api_key():
     assert response.status_code == 401
 
 
-def test_sanitize_rejects_invalid_api_key():
+def test_sanitize_rejects_invalid_api_key(client):
     response = client.post(
         "/sanitize",
         headers={"X-API-Key": "wrong-key"},
@@ -99,7 +107,7 @@ def test_sanitize_rejects_invalid_api_key():
     assert response.status_code == 401
 
 
-def test_sanitize_masks_email():
+def test_sanitize_masks_email(client):
     response = client.post(
         "/sanitize",
         headers=API_HEADERS,
@@ -116,7 +124,7 @@ def test_sanitize_masks_email():
     assert "mapping" not in data
 
 
-def test_sanitize_rejects_empty_text():
+def test_sanitize_rejects_empty_text(client):
     response = client.post(
         "/sanitize",
         headers=API_HEADERS,
@@ -126,7 +134,7 @@ def test_sanitize_rejects_empty_text():
     assert response.status_code == 422
 
 
-def test_sanitize_rejects_oversized_text():
+def test_sanitize_rejects_oversized_text(client):
     response = client.post(
         "/sanitize",
         headers=API_HEADERS,
@@ -140,7 +148,7 @@ def test_sanitize_rejects_oversized_text():
 # /chat endpoint tests
 # --------------------------------------------------
 
-def test_chat_rejects_missing_api_key():
+def test_chat_rejects_missing_api_key(client):
     response = client.post(
         "/chat",
         json={"text": "Hello"},
@@ -150,7 +158,7 @@ def test_chat_rejects_missing_api_key():
 
 
 def test_chat_returns_answer_and_sends_sanitized_prompt(
-    monkeypatch,
+    monkeypatch,client
 ):
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
 
@@ -189,7 +197,7 @@ def test_chat_returns_answer_and_sends_sanitized_prompt(
     assert "mapping" not in data
 
 
-def test_chat_handles_provider_rate_limit(monkeypatch):
+def test_chat_handles_provider_rate_limit(monkeypatch, client):
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
 
     provider_response = mock_groq_response(status_code=429)
@@ -212,7 +220,7 @@ def test_chat_handles_provider_rate_limit(monkeypatch):
     assert "rate limit" in response.json()["detail"].lower()
 
 
-def test_chat_handles_provider_timeout(monkeypatch):
+def test_chat_handles_provider_timeout(monkeypatch, client):
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
 
     _, context_manager = mock_async_client(
@@ -236,7 +244,7 @@ def test_chat_handles_provider_timeout(monkeypatch):
 
 
 
-def test_chat_rejects_missing_groq_api_key(monkeypatch):
+def test_chat_rejects_missing_groq_api_key(monkeypatch, client):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     response = client.post(
@@ -253,7 +261,7 @@ def test_chat_rejects_missing_groq_api_key(monkeypatch):
 
 
 
-def test_chat_handles_malformed_provider_response(monkeypatch):
+def test_chat_handles_malformed_provider_response(monkeypatch, client):
     monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
 
     malformed_response = mock_groq_response(
