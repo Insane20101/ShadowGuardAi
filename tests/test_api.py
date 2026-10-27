@@ -21,6 +21,10 @@ API_HEADERS = {"X-API-Key": TEST_API_KEY}
 
 
 
+import asyncio
+import json
+
+from starlette.requests import Request
 
 
 
@@ -370,3 +374,76 @@ def test_oversized_streamed_body_is_rejected(client, monkeypatch):
 
     assert response.status_code == 413
     assert response.json()["detail"] == "Request body is too large."
+
+
+
+
+
+
+
+# This test invokes the middleware directly with an ASGI request
+# containing two body chunks. It verifies that the second chunk 
+# pushes the total over the configured limit and the middleware
+# returns 413.
+
+
+
+
+import asyncio
+import json
+
+from starlette.requests import Request
+
+def test_oversized_streamed_body_is_rejected(monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(main, "MAX_REQUEST_BODY_BYTES", 10)
+
+    chunks = [
+        {
+            "type": "http.request",
+            "body": b'{"text":',
+            "more_body": True,
+        },
+        {
+            "type": "http.request",
+            "body": b'"hello"}',
+            "more_body": False,
+        },
+    ]
+    received = []
+
+    async def receive():
+        return chunks.pop(0)
+
+    async def call_next(request):
+        received.append(True)
+        return main.JSONResponse({"ok": True})
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/sanitize",
+        "raw_path": b"/sanitize",
+        "query_string": b"",
+        "headers": [
+            (b"content-type", b"application/json"),
+        ],
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
+    }
+
+    request = Request(scope, receive)
+
+    response = asyncio.run(
+        main.enforce_request_body_limit(request, call_next)
+    )
+
+    assert response.status_code == 413
+    assert received == []
+    assert json.loads(response.body) == {
+        "detail": "Request body is too large."
+    }
