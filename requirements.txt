@@ -29,3 +29,6 @@ langchain-ollama
 # Testing
 pytest
 pytest-asyncio
+
+# Rate limiting
+slowapi==0.1.10

@@ -447,3 +447,15 @@ def test_oversized_streamed_body_is_rejected(monkeypatch):
     assert json.loads(response.body) == {
         "detail": "Request body is too large."
     }
+
+
+# Add an invalid API-key test for /chat
+
+def test_chat_rejects_invalid_api_key(client):
+    response = client.post(
+        "/chat",
+        headers={"X-API-Key": "wrong-key"},
+        json={"text": "Hello"},
+    )
+
+    assert response.status_code == 401

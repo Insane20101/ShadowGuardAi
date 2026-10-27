@@ -130,7 +130,15 @@ app = FastAPI(
 # Rate limiting
 # -------------------------------------------------------------------
 
-limiter = Limiter(key_func=get_remote_address)
+RATE_LIMIT_STORAGE_URI = os.getenv(
+    "RATE_LIMIT_STORAGE_URI",
+    "memory://",
+)
+
+limiter = Limiter(
+    key_func=get_remote_address,
+    storage_uri=RATE_LIMIT_STORAGE_URI,
+)
 
 app.state.limiter = limiter
 app.add_exception_handler(
