@@ -199,12 +199,18 @@ def require_api_key(
 # Bounded request-body middleware
 # -------------------------------------------------------------------
 
+
+# -------------------------------------------------------------------
+# Bounded request-body middleware
+# -------------------------------------------------------------------
+
+class RequestBodyTooLarge(Exception):
+    """Raised when a request body exceeds the configured size limit."""
+
+
 @app.middleware("http")
-async def enforce_request_body_limit(
-    request: Request,
-    call_next,
-):
-    # Reject oversized declared bodies before reading them.
+async def enforce_request_body_limit(request: Request, call_next):
+    # Reject invalid or oversized declared bodies before reading them.
     content_length = request.headers.get("content-length")
 
     if content_length is not None:
@@ -228,37 +234,61 @@ async def enforce_request_body_limit(
                 content={"detail": "Request body is too large."},
             )
 
-    # Wrap the ASGI receive function. Count bytes as the downstream
-    # application reads them, without consuming or discarding the body.
-    original_receive = request.receive
-    total_bytes = 0
+    # Buffer the body up to the limit before passing it to FastAPI.
+    # This avoids raising a size-limit exception inside downstream
+    # request-body parsing.
+    body = bytearray()
 
-    async def limited_receive():
-        nonlocal total_bytes
+    while True:
+        message = await request.receive()
 
-        message = await original_receive()
+        if message["type"] == "http.disconnect":
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Client disconnected."},
+            )
 
-        if message["type"] == "http.request":
-            total_bytes += len(message.get("body", b""))
+        if message["type"] != "http.request":
+            continue
 
-            if total_bytes > MAX_REQUEST_BODY_BYTES:
-                raise RequestBodyTooLarge
+        chunk = message.get("body", b"")
 
-        return message
+        if len(body) + len(chunk) > MAX_REQUEST_BODY_BYTES:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "Request body is too large."},
+            )
 
-    request._receive = limited_receive
+        body.extend(chunk)
 
-    try:
-        return await call_next(request)
-    except RequestBodyTooLarge:
-        return JSONResponse(
-            status_code=413,
-            content={"detail": "Request body is too large."},
-        )
+        if not message.get("more_body", False):
+            break
+
+    # Replay the bounded body to the downstream application.
+    request._receive = replay_body(bytes(body))
+
+    return await call_next(request)
 
 
-class RequestBodyTooLarge(Exception):
-    """Raised when a streamed request body exceeds the configured limit."""
+def replay_body(body: bytes):
+    """Return an ASGI receive callable that replays a buffered body."""
+    sent = False
+
+    async def receive():
+        nonlocal sent
+
+        if not sent:
+            sent = True
+            return {
+                "type": "http.request",
+                "body": body,
+                "more_body": False,
+            }
+
+        return {"type": "http.disconnect"}
+
+    return receive
+
 
 
 # -------------------------------------------------------------------

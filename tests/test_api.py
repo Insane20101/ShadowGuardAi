@@ -286,3 +286,87 @@ def test_chat_handles_malformed_provider_response(monkeypatch, client):
     assert response.json()["detail"] == (
         "Unexpected response from the LLM provider."
     )
+
+
+
+
+
+
+
+
+
+# adapting the endpoint payload if your existing tests use a different format.
+
+
+
+
+
+
+def test_normal_request_body_is_accepted(client):
+    response = client.post(
+        "/sanitize",
+        json={"text": "Hello world"},
+        headers=API_HEADERS,
+    )
+
+    assert response.status_code == 200
+
+
+def test_oversized_content_length_is_rejected(client, monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(main, "MAX_REQUEST_BODY_BYTES", 10)
+
+    response = client.post(
+        "/sanitize",
+        content=b'{"text":"Hello world"}',
+        headers={
+            **API_HEADERS,
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Request body is too large."
+
+
+def test_invalid_content_length_is_rejected(client):
+    response = client.post(
+        "/sanitize",
+        content=b'{"text":"Hello"}',
+        headers={
+            **API_HEADERS,
+            "Content-Type": "application/json",
+            "Content-Length": "invalid",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Invalid Content-Length header."
+
+
+
+# Add a streamed-body test
+
+
+
+
+def test_oversized_streamed_body_is_rejected(client, monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(main, "MAX_REQUEST_BODY_BYTES", 10)
+
+    oversized_body = b'{"text":"This body is larger than ten bytes"}'
+
+    response = client.post(
+        "/sanitize",
+        content=oversized_body,
+        headers={
+            **API_HEADERS,
+            "Content-Type": "application/json",
+            "Content-Length": str(len(oversized_body)),
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == "Request body is too large."
