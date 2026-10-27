@@ -1,0 +1,25 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environment and caches
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+
+# Local model files
+models/*
+!models/.gitkeep
+
+# Test and tooling caches
+.mypy_cache/
+.ruff_cache/
+
+
+# Local learning notes and obsolete implementation
+app/notes.txt
+app/security/notes.txt
+app/security/sanitizerOld.txt

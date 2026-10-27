@@ -1,0 +1,31 @@
+
+# Backend API
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+httpx
+
+# PII detection and Hugging Face
+transformers
+huggingface_hub
+tokenizers
+torch
+
+# ONNX model inference and optimization
+onnx
+onnxruntime
+optimum-onnx
+
+# LangChain integrations
+langchain-core
+langchain
+langchain-openai
+langchain-community
+langchain-huggingface
+langchain-ollama
+
+# Testing
+pytest
+pytest-asyncio
