@@ -293,6 +293,118 @@ def test_chat_handles_malformed_provider_response(monkeypatch, client):
 
 
 
+def test_chat_sends_sanitized_prompt_to_provider(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+
+    original_prompt = "Contact alice@example.com for help"
+    provider_response = mock_groq_response()
+    _, context_manager = mock_async_client(
+        mock_response=provider_response
+    )
+
+    with patch(
+        "app.main.httpx.AsyncClient",
+        return_value=context_manager,
+    ) as mock_http_client:
+        response = client.post(
+            "/chat",
+            headers=API_HEADERS,
+            json={"text": original_prompt},
+        )
+
+    assert response.status_code == 200
+
+    # Inspect the actual payload sent to the upstream provider.
+    sent_payload = context_manager.__aenter__.return_value.post.call_args.kwargs["json"]
+    sent_prompt = sent_payload["messages"][0]["content"]
+
+    assert "alice@example.com" not in sent_prompt
+    assert sent_prompt != original_prompt
+    assert mock_http_client.called
+
+
+def test_chat_provider_error_does_not_leak_prompt_or_api_key(
+    client, monkeypatch
+):
+    secret_key = "test-groq-secret-do-not-leak"
+    sensitive_prompt = "My email is alice@example.com"
+
+    monkeypatch.setenv("GROQ_API_KEY", secret_key)
+
+    provider_error = httpx.HTTPStatusError(
+        "Provider error containing sensitive details",
+        request=httpx.Request(
+            "POST",
+            "https://api.groq.com/openai/v1/chat/completions",
+        ),
+        response=httpx.Response(
+            500,
+            text=f"Failed prompt={sensitive_prompt}; key={secret_key}",
+        ),
+    )
+
+    _, context_manager = mock_async_client(
+        side_effect=provider_error
+    )
+
+    with patch(
+        "app.main.httpx.AsyncClient",
+        return_value=context_manager,
+    ):
+        response = client.post(
+            "/chat",
+            headers=API_HEADERS,
+            json={"text": sensitive_prompt},
+        )
+
+    assert response.status_code == 502
+    assert sensitive_prompt not in response.text
+    assert secret_key not in response.text
+    assert response.json()["detail"] == (
+        "The LLM provider request failed."
+    )
+
+def test_chat_logs_do_not_contain_raw_prompt_or_provider_key(
+    client, monkeypatch, caplog
+):
+    secret_key = "test-groq-secret-do-not-log"
+    sensitive_prompt = "Contact alice@example.com immediately"
+
+    monkeypatch.setenv("GROQ_API_KEY", secret_key)
+
+    provider_error = httpx.HTTPStatusError(
+        "Provider failed",
+        request=httpx.Request(
+            "POST",
+            "https://api.groq.com/openai/v1/chat/completions",
+        ),
+        response=httpx.Response(
+            500,
+            text="Internal provider failure",
+        ),
+    )
+
+    _, context_manager = mock_async_client(
+        side_effect=provider_error
+    )
+
+    with patch(
+        "app.main.httpx.AsyncClient",
+        return_value=context_manager,
+    ):
+        response = client.post(
+            "/chat",
+            headers=API_HEADERS,
+            json={"text": sensitive_prompt},
+        )
+
+    assert response.status_code == 502
+
+    captured_logs = caplog.text
+    assert sensitive_prompt not in captured_logs
+    assert "alice@example.com" not in captured_logs
+    assert secret_key not in captured_logs
+
 
 
 
@@ -394,7 +506,7 @@ import json
 
 from starlette.requests import Request
 
-def test_oversized_streamed_body_is_rejected(monkeypatch):
+def test_oversized_streamed_body_is_rejected_without_content_length(monkeypatch):
     from app import main
 
     monkeypatch.setattr(main, "MAX_REQUEST_BODY_BYTES", 10)
@@ -444,8 +556,8 @@ def test_oversized_streamed_body_is_rejected(monkeypatch):
 
     assert response.status_code == 413
     assert received == []
-    assert json.loads(response.body) == {
-        "detail": "Request body is too large."
+    assert json.loads(bytes(response.body).decode("utf-8")) == {
+        "detail": "Request body is too large.",
     }
 
 
