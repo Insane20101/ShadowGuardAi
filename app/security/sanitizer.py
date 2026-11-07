@@ -214,6 +214,8 @@ class Sanitizer:
         )
 
 
+
+# POTENTIAL ISSUE
 def sanitize(text: str) -> SanitizationResult:
     """Backward-compatible helper for existing callers."""
     return Sanitizer().sanitize(text)

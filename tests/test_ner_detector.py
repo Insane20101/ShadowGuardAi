@@ -84,3 +84,47 @@ def test_invalid_offsets_are_rejected():
     )
 
     assert detector.detect("Rahul Sharma") == []
+
+
+
+
+
+
+
+def test_low_confidence_entities_are_filtered():
+    detector = NERDetector(min_confidence=0.80)
+    detector.__dict__["_pipeline"] = Mock(return_value=[
+        {"score": 0.79, "start": 0, "end": 5, "entity_group": "PER"},
+        {"score": 0.95, "start": 6, "end": 12, "entity_group": "ORG"},
+    ])
+
+    entities = detector.detect("Rahul Google")
+
+    assert len(entities) == 1
+    assert entities[0].text == "Google"
+    assert entities[0].entity_type == "ORG"
+
+
+def test_invalid_confidence_values_are_rejected():
+    detector = NERDetector()
+    detector.__dict__["_pipeline"] = Mock(return_value=[
+        {"score": float("nan"), "start": 0, "end": 5, "entity_group": "PER"},
+        {"score": float("inf"), "start": 0, "end": 5, "entity_group": "PER"},
+        {"score": float("-inf"), "start": 0, "end": 5, "entity_group": "PER"},
+        {"score": 1.5, "start": 6, "end": 12, "entity_group": "ORG"},
+    ])
+
+    assert detector.detect("Rahul Google") == []
+
+def test_detected_entity_offsets_match_original_text():
+    detector = NERDetector()
+    text = "Contact Rahul Sharma today."
+    detector.__dict__["_pipeline"] = Mock(return_value=[
+        {"score": 0.99, "start": 8, "end": 20, "entity_group": "PER"},
+    ])
+
+    entities = detector.detect(text)
+
+    assert len(entities) == 1
+    assert entities[0].text == "Rahul Sharma"
+    assert text[entities[0].start:entities[0].end] == entities[0].text

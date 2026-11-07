@@ -1,4 +1,4 @@
-
+import math
 import os
 from dataclasses import dataclass
 from functools import cached_property
@@ -70,7 +70,7 @@ class NERDetector:
                 # entities from incomplete model output.
                 continue
 
-            if not 0.0 <= score <= 1.0:
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
                 continue
 
             if score < self.min_confidence:
@@ -118,3 +118,5 @@ class NERDetector:
                 merged.append(entity)
 
         return merged
+
+
